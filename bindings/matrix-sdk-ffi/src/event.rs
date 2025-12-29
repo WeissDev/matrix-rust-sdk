@@ -1,5 +1,8 @@
+use std::sync::Arc;
+
 use anyhow::{bail, Context};
 use matrix_sdk::IdParseError;
+use matrix_sdk_base::deserialized_responses::RawAnySyncOrStrippedState;
 use matrix_sdk_ui::timeline::TimelineEventItemId;
 use ruma::{
     events::{
@@ -70,6 +73,33 @@ impl TimelineEvent {
 impl From<AnyTimelineEvent> for TimelineEvent {
     fn from(event: AnyTimelineEvent) -> Self {
         Self(Box::new(event.into()))
+    }
+}
+
+/// A raw state event retrieved from the room state store.
+///
+/// This wrapper provides access to the full raw JSON of a state event,
+/// which is useful for accessing custom fields that aren't exposed through
+/// typed APIs.
+#[derive(uniffi::Object)]
+pub struct RawStateEvent(RawAnySyncOrStrippedState);
+
+impl RawStateEvent {
+    pub(crate) fn new(raw: RawAnySyncOrStrippedState) -> Arc<Self> {
+        Arc::new(Self(raw))
+    }
+}
+
+#[matrix_sdk_ffi_macros::export]
+impl RawStateEvent {
+    /// Get the full event as a JSON string.
+    ///
+    /// This includes all fields: type, state_key, sender, content, etc.
+    pub fn json(&self) -> Result<String, ClientError> {
+        serde_json::to_string(&self.0).map_err(|e| ClientError::Generic {
+            msg: format!("Failed to serialize state event: {e}"),
+            details: Some(format!("{e:?}")),
+        })
     }
 }
 

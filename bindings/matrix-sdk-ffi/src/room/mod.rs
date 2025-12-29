@@ -30,7 +30,7 @@ use ruma::{
             join_rules::JoinRule as RumaJoinRule, message::RoomMessageEventContentWithoutRelation,
             MediaSource as RumaMediaSource,
         },
-        AnyMessageLikeEventContent, AnySyncTimelineEvent,
+        AnyMessageLikeEventContent, AnySyncTimelineEvent, StateEventType as RumaStateEventType,
     },
     EventId, Int, OwnedDeviceId, OwnedRoomOrAliasId, OwnedServerName, OwnedUserId, RoomAliasId,
     ServerName, UserId,
@@ -42,7 +42,7 @@ use crate::{
     chunk_iterator::ChunkIterator,
     client::{JoinRule, RoomVisibility},
     error::{ClientError, MediaInfoError, NotYetImplemented, QueueWedgeError, RoomError},
-    event::TimelineEvent,
+    event::{RawStateEvent, StateEventType, TimelineEvent},
     identity_status_change::IdentityStatusChange,
     live_location_share::{LastLocation, LiveLocationShare},
     room_member::{RoomMember, RoomMemberWithSenderInfo},
@@ -132,7 +132,69 @@ impl Room {
         self.inner.is_space()
     }
 
-    /// If this room is tombstoned, return the “reference” to the successor room
+    /// Get a state event from the room's state store.
+    ///
+    /// This method retrieves a state event as a raw wrapper, which provides
+    /// access to the full JSON including custom fields that aren't exposed
+    /// through typed APIs.
+    ///
+    /// For custom event types, use `StateEventType::Custom { value: "..." }`.
+    ///
+    /// # Arguments
+    ///
+    /// * `event_type` - The type of state event to retrieve
+    /// * `state_key` - The state key of the event (empty string for events with
+    ///   no state key)
+    ///
+    /// # Returns
+    ///
+    /// A `RawStateEvent` wrapper providing access to the full event JSON,
+    /// or `None` if not found.
+    pub async fn get_state_event(
+        &self,
+        event_type: StateEventType,
+        state_key: String,
+    ) -> Result<Option<Arc<RawStateEvent>>, ClientError> {
+        let ruma_event_type: RumaStateEventType = event_type.into();
+        let raw_event = self.inner.get_state_event(ruma_event_type, &state_key).await?;
+
+        Ok(raw_event.map(RawStateEvent::new))
+    }
+
+    /// Send a state event to the room.
+    ///
+    /// # Arguments
+    ///
+    /// * `event_type` - The type of state event to send.
+    /// * `state_key` - The state key for the event. Use an empty string for
+    ///   state events with no state key.
+    /// * `content` - The event content as a JSON string.
+    ///
+    /// # Returns
+    ///
+    /// The event ID of the sent state event.
+    pub async fn send_state_event(
+        &self,
+        event_type: StateEventType,
+        state_key: String,
+        content: String,
+    ) -> Result<String, ClientError> {
+        let ruma_event_type: RumaStateEventType = event_type.into();
+        let content_json: serde_json::Value =
+            serde_json::from_str(&content).map_err(|e| ClientError::Generic {
+                msg: format!("Failed to parse state event content as JSON: {e}"),
+                details: Some(format!("{e:?}")),
+            })?;
+
+        let response = self
+            .inner
+            .send_state_event_raw(ruma_event_type.to_string().as_str(), &state_key, content_json)
+            .await?;
+
+        Ok(response.event_id.to_string())
+    }
+
+    /// If this room is tombstoned, return the "reference" to the successor room
     /// —i.e. the room replacing this one.
     ///
     /// A room is tombstoned if it has received a [`m.room.tombstone`] state

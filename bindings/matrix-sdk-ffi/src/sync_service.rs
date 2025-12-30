@@ -26,9 +26,19 @@ use matrix_sdk_ui::{
 };
 
 use crate::{
-    error::ClientError, helpers::unwrap_or_clone_arc, room_list::RoomListService,
-    runtime::get_runtime_handle, TaskHandle,
+    error::ClientError, event::StateEventType, helpers::unwrap_or_clone_arc,
+    room_list::RoomListService, runtime::get_runtime_handle, TaskHandle,
 };
+
+/// An extra required state entry for sliding sync.
+#[derive(uniffi::Record)]
+pub struct ExtraRequiredState {
+    /// The state event type to sync.
+    pub event_type: StateEventType,
+    /// The state key to match. Use empty string for events with no state key,
+    /// or `"*"` to match all state keys for this event type.
+    pub state_key: String,
+}
 
 #[derive(uniffi::Enum)]
 pub enum SyncServiceState {
@@ -131,6 +141,29 @@ impl SyncServiceBuilder {
     pub fn with_share_pos(self: Arc<Self>, enable: bool) -> Arc<Self> {
         let this = unwrap_or_clone_arc(self);
         let builder = this.builder.with_share_pos(enable);
+        Arc::new(Self { builder, ..this })
+    }
+
+    /// Add extra required state events to sync beyond the defaults.
+    ///
+    /// These will be merged with the default required state and synced for all
+    /// rooms in the room list. This is useful for syncing custom state events
+    /// that your application needs.
+    ///
+    /// # Arguments
+    ///
+    /// * `required_state` - A list of extra required state entries to sync. Use
+    ///   `StateEventType::Custom` for custom event types like
+    ///   `com.example.custom`. For state_key, use empty string for events with
+    ///   no state key, or `"*"` to match all state keys for this event type.
+    pub fn with_extra_required_state(
+        self: Arc<Self>,
+        required_state: Vec<ExtraRequiredState>,
+    ) -> Arc<Self> {
+        let this = unwrap_or_clone_arc(self);
+        let extra: Vec<_> =
+            required_state.into_iter().map(|r| (r.event_type.into(), r.state_key)).collect();
+        let builder = this.builder.with_extra_required_state(extra);
         Arc::new(Self { builder, ..this })
     }
 

@@ -135,7 +135,7 @@ impl RoomListService {
     /// to create one in this case using
     /// [`EncryptionSyncService`][crate::encryption_sync_service::EncryptionSyncService].
     pub async fn new(client: Client) -> Result<Self, Error> {
-        Self::new_with_share_pos(client, true).await
+        Self::new_with_extra_required_state(client, true, Vec::new()).await
     }
 
     /// Like [`RoomListService::new`] but with a flag to turn the
@@ -143,6 +143,19 @@ impl RoomListService {
     ///
     /// [`SlidingSyncBuilder::share_pos`]: matrix_sdk::sliding_sync::SlidingSyncBuilder::share_pos
     pub async fn new_with_share_pos(client: Client, share_pos: bool) -> Result<Self, Error> {
+        Self::new_with_extra_required_state(client, share_pos, Vec::new()).await
+    }
+
+    /// Like [`RoomListService::new_with_share_pos`] but also allows specifying
+    /// extra required state events to sync beyond the defaults.
+    ///
+    /// The `extra_required_state` will be merged with [`DEFAULT_REQUIRED_STATE`]
+    /// and synced for all rooms.
+    pub(crate) async fn new_with_extra_required_state(
+        client: Client,
+        share_pos: bool,
+        extra_required_state: Vec<(StateEventType, String)>,
+    ) -> Result<Self, Error> {
         let mut builder = client
             .sliding_sync("room-list")
             .map_err(Error::SlidingSync)?
@@ -200,6 +213,13 @@ impl RoomListService {
         let state_machine = StateMachine::new();
         let observable_state = state_machine.cloned_state();
 
+        // Build the required state by merging defaults with extra required state
+        let required_state: Vec<(StateEventType, String)> = DEFAULT_REQUIRED_STATE
+            .iter()
+            .map(|(state_event, value)| (state_event.clone(), (*value).to_owned()))
+            .chain(extra_required_state.into_iter())
+            .collect();
+
         let sliding_sync = builder
             .add_cached_list(
                 SlidingSyncList::builder(ALL_ROOMS_LIST_NAME)
@@ -208,12 +228,7 @@ impl RoomListService {
                             .add_range(ALL_ROOMS_DEFAULT_SELECTIVE_RANGE),
                     )
                     .timeline_limit(1)
-                    .required_state(
-                        DEFAULT_REQUIRED_STATE
-                            .iter()
-                            .map(|(state_event, value)| (state_event.clone(), (*value).to_owned()))
-                            .collect(),
-                    )
+                    .required_state(required_state)
                     .filters(Some(assign!(http::request::ListFilters::default(), {
                         // As defined in the [SlidingSync MSC](https://github.com/matrix-org/matrix-spec-proposals/blob/9450ced7fb9cf5ea9077d029b3adf36aebfa8709/proposals/3575-sync.md?plain=1#L444)
                         // If unset, both invited and joined rooms are returned. If false, no invited rooms are

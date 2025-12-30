@@ -783,6 +783,12 @@ pub struct SyncServiceBuilder {
     /// defined span, for example if there is more than one active sync
     /// service.
     parent_span: Span,
+
+    /// Extra required state events to sync beyond the defaults.
+    ///
+    /// These will be merged with the default required state and synced for all
+    /// rooms in the room list.
+    extra_required_state: Vec<(ruma::events::StateEventType, String)>,
 }
 
 impl SyncServiceBuilder {
@@ -793,6 +799,7 @@ impl SyncServiceBuilder {
             with_offline_mode: false,
             with_share_pos: true,
             parent_span: Span::none(),
+            extra_required_state: Vec::new(),
         }
     }
 
@@ -835,6 +842,39 @@ impl SyncServiceBuilder {
         self
     }
 
+    /// Add extra required state events to sync beyond the defaults.
+    ///
+    /// These will be merged with the default required state and synced for all
+    /// rooms in the room list. This is useful for syncing custom state events
+    /// that your application needs.
+    ///
+    /// # Arguments
+    ///
+    /// * `extra_required_state` - A vector of (event_type, state_key) pairs to
+    ///   sync. Use `""` for events with no state key, or `"*"` to match all
+    ///   state keys for a given event type.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use ruma::events::StateEventType;
+    ///
+    /// let sync_service = SyncService::builder(client)
+    ///     .with_extra_required_state(vec![
+    ///         (StateEventType::from("com.example.custom"), "*".to_owned()),
+    ///         (StateEventType::from("com.example.other"), "".to_owned()),
+    ///     ])
+    ///     .build()
+    ///     .await?;
+    /// ```
+    pub fn with_extra_required_state(
+        mut self,
+        extra_required_state: Vec<(ruma::events::StateEventType, String)>,
+    ) -> Self {
+        self.extra_required_state.extend(extra_required_state);
+        self
+    }
+
     /// Finish setting up the [`SyncService`].
     ///
     /// This creates the underlying sliding syncs, and will *not* start them in
@@ -847,11 +887,17 @@ impl SyncServiceBuilder {
             with_offline_mode,
             with_share_pos,
             parent_span,
+            extra_required_state,
         } = self;
 
         let encryption_sync_permit = Arc::new(AsyncMutex::new(EncryptionSyncPermit::new()));
 
-        let room_list = RoomListService::new_with_share_pos(client.clone(), with_share_pos).await?;
+        let room_list = RoomListService::new_with_extra_required_state(
+            client.clone(),
+            with_share_pos,
+            extra_required_state,
+        )
+        .await?;
 
         let encryption_sync = Arc::new(
             EncryptionSyncService::new(client, None, WithLocking::from(with_cross_process_lock))
